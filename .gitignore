@@ -1,2 +1,4 @@
 PyCharmMiscProject.iml
-
+.idea
+.gitignore
+.DS_Store
