@@ -81,30 +81,45 @@ def create_events_from_pattern(course, pattern_text, week_start_date, semester_e
         if len(parts) < 2:
             continue
         days, times = parts[0], parts[1]
-        location = parts[2] if len(parts) > 2 else ""
+        # NEW: capture location if it exists
+        location = ""
+        if len(parts) >= 3:
+            # some files repeat the location twice – keep only the unique text
+            locs = [p.strip() for p in parts[2:]]
+            # e.g. "Olin Hall -- Room 310 | Olin Hall -- Room 310"
+            # de-duplicate while preserving order
+            seen = set()
+            unique_locs = [l for l in locs if not (l in seen or seen.add(l))]
+            location = " | ".join(unique_locs)
 
         start_time_str, end_time_str = [t.strip() for t in times.split("-")]
 
-        temp_days = days.replace("TH","H")
+        temp_days = days.replace("TH", "H")
         for day_char in temp_days:
-            day_char = "TH" if day_char=="H" else day_char
+            day_char = "TH" if day_char == "H" else day_char
             weekday = DAY_MAP.get(day_char.upper())
             if weekday is None:
                 continue
 
             event_date = week_start_date + timedelta(days=(weekday - week_start_date.weekday()) % 7)
-            # Skip any event beyond semester end
             if event_date > semester_end_date:
                 continue
 
-            start_dt = datetime.combine(event_date, datetime.strptime(start_time_str, "%I:%M %p").time())
-            end_dt = datetime.combine(event_date, datetime.strptime(end_time_str, "%I:%M %p").time())
+            start_dt = datetime.combine(event_date,
+                                        datetime.strptime(start_time_str, "%I:%M %p").time())
+            end_dt = datetime.combine(event_date,
+                                      datetime.strptime(end_time_str, "%I:%M %p").time())
 
             event = Event()
-            event.add('summary', course)
-            event.add('dtstart', start_dt)
-            event.add('dtend', end_dt)
-            event.add('description', f"Meeting Pattern: {line} | {location}")
+            event.add("summary", course)
+            event.add("dtstart", start_dt)
+            event.add("dtend", end_dt)
+            # keep full pattern in description
+            event.add("description", f"Meeting Pattern: {line}")
+            # NEW: add proper iCalendar location field
+            if location:
+                event.add("location", location)
+
             events.append(event)
     return events
 
