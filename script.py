@@ -7,10 +7,21 @@ import pandas as pd
 from datetime import datetime, timedelta
 from icalendar import Calendar, Event
 import warnings
+import colorsys
+
 warnings.simplefilter("ignore", UserWarning)
 
 # ---- Constants ----
 DAY_MAP = {"M":0, "T":1, "W":2, "TH":3, "F":4, "S":5, "SU":6}
+
+# ---- Color Utility ----
+def generate_distinct_colors(n):
+    colors = []
+    for i in range(n):
+        hue = i / n
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.9)
+        colors.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
+    return colors
 
 # ---- Conversion Logic ----
 def convert_xlsx_to_ics(xlsx_path, output_directory):
@@ -40,6 +51,14 @@ def convert_xlsx_to_ics(xlsx_path, output_directory):
         raise ValueError(f"Missing required column(s): {missing}")
 
     df['Course Listing'] = df['Course Listing'].ffill()
+
+    # Assign unique colors per course
+    unique_courses = df['Course Listing'].dropna().unique()
+    course_colors = dict(zip(
+        unique_courses,
+        generate_distinct_colors(len(unique_courses))
+    ))
+
     cal = Calendar()
 
     for _, row in df.iterrows():
@@ -57,15 +76,19 @@ def convert_xlsx_to_ics(xlsx_path, output_directory):
         except (ValueError, TypeError):
             continue
 
-        # Loop through each week until end date
         week_start = start_dt
         while week_start <= end_dt:
-            events = create_events_from_pattern(course, pattern_text, week_start, end_dt)
+            events = create_events_from_pattern(
+                course,
+                pattern_text,
+                week_start,
+                end_dt,
+                course_colors[course]
+            )
             for ev in events:
                 cal.add_component(ev)
             week_start += timedelta(days=7)
 
-    # Output ICS file
     base_name = os.path.splitext(os.path.basename(xlsx_path))[0]
     output_path = os.path.join(output_directory, f"{base_name}.ics")
     with open(output_path, "wb") as f:
@@ -74,53 +97,60 @@ def convert_xlsx_to_ics(xlsx_path, output_directory):
     print(f"Conversion successful: {output_path}")
     return output_path
 
-def create_events_from_pattern(course, pattern_text, week_start_date, semester_end_date):
+def create_events_from_pattern(course, pattern_text, week_start_date, semester_end_date, color):
     events = []
     for line in pattern_text.splitlines():
         parts = [p.strip() for p in line.split("|")]
         if len(parts) < 2:
             continue
+
         days, times = parts[0], parts[1]
-        # NEW: capture location if it exists
         location = ""
         if len(parts) >= 3:
-            # some files repeat the location twice – keep only the unique text
             locs = [p.strip() for p in parts[2:]]
-            # e.g. "Olin Hall -- Room 310 | Olin Hall -- Room 310"
-            # de-duplicate while preserving order
             seen = set()
             unique_locs = [l for l in locs if not (l in seen or seen.add(l))]
             location = " | ".join(unique_locs)
 
         start_time_str, end_time_str = [t.strip() for t in times.split("-")]
-
         temp_days = days.replace("TH", "H")
+
         for day_char in temp_days:
             day_char = "TH" if day_char == "H" else day_char
             weekday = DAY_MAP.get(day_char.upper())
             if weekday is None:
                 continue
 
-            event_date = week_start_date + timedelta(days=(weekday - week_start_date.weekday()) % 7)
+            event_date = week_start_date + timedelta(
+                days=(weekday - week_start_date.weekday()) % 7
+            )
             if event_date > semester_end_date:
                 continue
 
-            start_dt = datetime.combine(event_date,
-                                        datetime.strptime(start_time_str, "%I:%M %p").time())
-            end_dt = datetime.combine(event_date,
-                                      datetime.strptime(end_time_str, "%I:%M %p").time())
+            start_dt = datetime.combine(
+                event_date,
+                datetime.strptime(start_time_str, "%I:%M %p").time()
+            )
+            end_dt = datetime.combine(
+                event_date,
+                datetime.strptime(end_time_str, "%I:%M %p").time()
+            )
 
             event = Event()
             event.add("summary", course)
             event.add("dtstart", start_dt)
             event.add("dtend", end_dt)
-            # keep full pattern in description
             event.add("description", f"Meeting Pattern: {line}")
-            # NEW: add proper iCalendar location field
+
             if location:
                 event.add("location", location)
 
+            # Unique color per course
+            event.add("color", color)
+            event.add("X-APPLE-CALENDAR-COLOR", color)
+
             events.append(event)
+
     return events
 
 # ---- GUI Functions ----
@@ -186,7 +216,10 @@ tk.Button(root, text="Import Excel File(s)", command=import_files, width=30).gri
     row=0, column=0, columnspan=2, pady=10
 )
 
-tk.Label(root, text="Generated Files (Desktop):").grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
+tk.Label(root, text="Generated Files (Desktop):").grid(
+    row=1, column=0, columnspan=2, sticky="w", padx=10
+)
+
 file_listbox = tk.Listbox(root, width=60, height=12)
 file_listbox.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
 file_listbox.bind("<Double-Button-1>", open_selected_file)
